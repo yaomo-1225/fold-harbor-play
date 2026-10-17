@@ -3,12 +3,13 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <meta name="theme-color" content="#f6f8f3">
-  <meta name="description" content="折光航局：轻触纸舟，折转光路。先放畅通的船，没路再换相，每次离港都是进展。">
-  <title>折光航局 · 让思路转个弯</title>
-  <link rel="stylesheet" href="style.css?v=4">
-  <script src="engine.js?v=4" defer></script>
-  <script src="app.js?v=4" defer></script>
+  <meta name="theme-color" content="#091e2b">
+  <meta name="description" content="折光航局：深海夜航，读懂折光路线，连续放行清空星港。32 关镜面、星门与潮门挑战。">
+  <title>折光航局 · 深海夜航</title>
+  <link rel="stylesheet" href="style.css?v=5">
+  <script src="engine.js?v=5" defer></script>
+  <script src="visuals.js?v=5" defer></script>
+  <script src="app.js?v=5" defer></script>
 </head>
 <body>
   <div class="ambient-orbit orbit-one" aria-hidden="true"></div>
@@ -16,8 +17,8 @@
   <main class="app-shell">
     <header class="masthead">
       <a class="brand" href="./" aria-label="折光航局首页">
-        <span class="brand-mark" aria-hidden="true"><svg viewBox="0 0 40 40"><path d="m10 29 10-21 11 21-11-7Z"/><path class="brand-fold" d="m20 8 0 14 11 7Z"/></svg></span>
-        <span class="brand-name">折光航局</span>
+        <span class="brand-mark" aria-hidden="true"><svg viewBox="0 0 40 40"><path d="M20 6 29 25 26 32H14l-3-7Z"/><path class="brand-fold" d="M20 12 24 24h-8Z"/><path class="brand-wave" d="M7 30q6-4 13 0t13 0"/></svg></span>
+        <span class="brand-lockup"><span class="brand-name">折光航局</span><span class="brand-caption">PRISM HARBOR</span></span>
       </a>
       <div class="header-actions">
         <button type="button" id="sound-btn" class="icon-button" aria-label="开启音效" title="切换音效" aria-pressed="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m11 5-5 4H3v6h3l5 4V5Z"/><path d="M15 8a6 6 0 0 1 0 8m3-11a10 10 0 0 1 0 14"/></svg><span class="sr-only">音效关</span></button>
@@ -32,9 +33,11 @@
       </header>
 
       <div class="progress-panel" aria-label="当前航行状态">
-        <span class="remaining-caption">待离港 <strong id="remaining">—</strong> 艘</span>
-        <div class="progress-track" role="presentation"><div id="progress-fill" class="progress-fill"></div></div>
+        <span class="remaining-caption"><span>待离港</span><strong id="remaining">—</strong></span>
+        <span class="score-caption"><span>SCORE</span><strong id="score-value">0000</strong></span>
+        <span class="combo-pill"><span>连航</span><strong id="combo-count">0</strong></span>
         <span class="phase-badge"><span class="phase-glyph" aria-hidden="true"></span><strong id="phase-label">镜相 A</strong></span>
+        <div class="progress-track" role="presentation"><div id="progress-fill" class="progress-fill"></div></div>
         <span id="moves" hidden>0</span>
       </div>
 
@@ -42,6 +45,7 @@
         <div id="board-stage" class="board-stage">
           <svg id="board-svg" xmlns="http://www.w3.org/2000/svg" role="group" aria-label="可交互的港口棋盘"></svg>
           <div id="board-overlay" class="board-overlay" aria-hidden="true"></div>
+          <div id="combo-feedback" class="combo-feedback" aria-hidden="true"></div>
         </div>
       </div>
 
@@ -53,7 +57,7 @@
         <button type="button" id="hint-btn" class="tool-button"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 19h6m-5 3h4M8 14a7 7 0 1 1 8 0l-1 3H9l-1-3Z"/></svg><span>提示</span></button>
         <button type="button" id="restart-btn" class="tool-button"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 8a8 8 0 1 1-1 8M5 3v5h5"/></svg><span>重开</span></button>
       </div>
-      <p class="control-footnote">先放畅通的船 <span aria-hidden="true">·</span> 没路再换相</p>
+      <p class="control-footnote">读懂航线 <span aria-hidden="true">·</span> 连续放行 <span aria-hidden="true">·</span> 一路清港</p>
     </section>
   </main>
 
@@ -70,12 +74,13 @@
 
   <dialog id="help-dialog" class="game-dialog help-dialog" aria-labelledby="help-title">
     <button type="button" id="close-help-btn" class="dialog-close" aria-label="关闭玩法"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M6 18 18 6"/></svg></button>
-    <div class="help-heading"><div class="dialog-symbol" aria-hidden="true">↱</div><p class="eyebrow">让思路，转个弯</p><h2 id="help-title">让每艘纸舟找到出口</h2></div>
+    <div class="help-heading"><div class="dialog-symbol" aria-hidden="true">↱</div><p class="eyebrow">深海夜航 · 航行手册</p><h2 id="help-title">让每一艘船冲出港口</h2></div>
     <div class="help-scroll">
     <ol class="help-rules">
       <li><span>01</span><div><strong>轻触邮船，沿光启航</strong><p>邮船沿尖角方向前进，遇到镜面就转弯。避开其他邮船与礁石，驶出边界即可离港。</p></div></li>
       <li><span>02</span><div><strong>离港之后，镜相切换</strong><p>普通镜面自动换向，金色定向镜保持不变；潮汐闸也随镜相开合。</p></div></li>
       <li><span>03</span><div><strong>先放船，没路再换相</strong><p>优先放走当前畅通的船，选哪艘都行，不用猜顺序。全部受阻时再换相，正常玩每关最多手动切换一次。试玩中切换免费，不设次数限制；每次成功离港，都能继续通关。</p></div></li>
+      <li><span>04</span><div><strong>读懂航线，连续放行冲三星</strong><p>2.6 秒内连续成功放行可叠加连航，连航、折光与传送都会加分。点到受阻的船会断连，不扣船，也不会失败。零受阻清港得三星，少量受阻得二星，清港至少一星；慢慢观察也能拿三星。</p></div></li>
     </ol>
     <div id="mechanic-guide" class="mechanic-guide" aria-label="本关机关图例"></div>
     <div class="level-tip"><strong>本航区小提示</strong><p id="level-tip">先从靠近边缘的邮船开始，看看航路怎样变化。</p></div>
@@ -84,8 +89,8 @@
   </dialog>
 
   <dialog id="win-dialog" class="game-dialog win-dialog" aria-labelledby="win-title">
-    <div class="win-art" aria-hidden="true"><span class="win-ring ring-one"></span><span class="win-ring ring-two"></span><svg viewBox="0 0 80 80"><path d="m15 56 28-43 22 43-25-10Z"/><path class="win-fold" d="m43 13-3 33 25 10Z"/></svg><i class="win-star star-one">✦</i><i class="win-star star-two">✦</i></div>
-    <p class="eyebrow">又一段漂亮的航程</p><h2 id="win-title">全部顺利离港</h2><p id="win-detail">每一艘邮船，都找到了它的方向。</p><p id="chapter-completion" class="chapter-completion"></p>
+    <div class="win-art" aria-hidden="true"><span class="win-ring ring-one"></span><span class="win-ring ring-two"></span><svg viewBox="0 0 80 80"><path d="M40 8C50 16 60 31 63 52l-6 14H23l-6-14C20 31 30 16 40 8Z"/><path class="win-fold" d="m40 14 14 25H26Z"/><path d="M28 37q12-8 24 0l2 9H26Z" fill="#153947"/><rect class="win-fold" x="29" y="49" width="22" height="10" rx="3"/><path d="M31 71v6m9-5v6m9-7v6" stroke="#95cdb5" stroke-width="2" stroke-linecap="round"/></svg><i class="win-star star-one">✦</i><i class="win-star star-two">✦</i></div>
+    <p class="eyebrow">又一段漂亮的航程</p><h2 id="win-title">全部顺利离港</h2><div id="win-stars" aria-label="本关星级"></div><p id="win-detail">每一艘邮船，都找到了它的方向。</p><div id="win-stats"></div><p id="chapter-completion" class="chapter-completion"></p>
     <div class="win-actions"><button type="button" id="next-btn" class="primary-button">前往下一航区 <span aria-hidden="true">↗</span></button><button type="button" id="replay-btn" class="text-button">再玩一次</button></div>
   </dialog>
 </body>

@@ -12,7 +12,9 @@
   if (!saved.completed || typeof saved.completed !== 'object' || Array.isArray(saved.completed)) saved.completed = {};
   let index = Number.isInteger(saved.current) && E.LEVELS[saved.current] ? saved.current : 0;
   let level, state, busy = false, hints = 0, hinted = null, audioContext = null, viewedChapter = 1;
-  let soundOn = saved.sound === true, flightFrame = 0, flashTimer;
+  let soundOn = saved.sound !== false, flashTimer, feedbackTimer, epoch = 0;
+  let score = 0, combo = 0, bestCombo = 0, misfires = 0, lastLaunch = 0;
+  const flights = new Map();
   let pathLayer, flightLayer;
   const svg = $('board-svg'), stage = $('board-stage');
   const CELL = 80, PAD = 22;
@@ -39,10 +41,12 @@
     try {
       audioContext ||= new (window.AudioContext || window.webkitAudioContext)();
       if (audioContext.state === 'suspended') audioContext.resume().catch(() => {});
-      const notes = kind === 'win' ? [523,659,784,1047] : kind === 'clear' ? [659,880] : kind === 'flip' ? [392,587] : [220];
+      const scale=[523,587,659,784,880,1047,1175,1319];
+      const tone=scale[Math.min(Math.max(combo-1,0),scale.length-1)];
+      const notes = kind === 'win' ? [523,659,784,1047] : kind === 'clear' ? [tone,tone*1.5] : kind === 'flip' ? [392,587] : [196];
       notes.forEach((freq,i) => {
         const oscillator = audioContext.createOscillator(), gain = audioContext.createGain(), t = audioContext.currentTime + i*.07;
-        oscillator.type = 'sine'; oscillator.frequency.value = freq;
+        oscillator.type = kind === 'clear' ? 'triangle' : 'sine'; oscillator.frequency.value = freq;
         gain.gain.setValueAtTime(0,t); gain.gain.linearRampToValueAtTime(.045,t+.015); gain.gain.exponentialRampToValueAtTime(.0001,t+.22);
         oscillator.connect(gain); gain.connect(audioContext.destination); oscillator.start(t); oscillator.stop(t+.24);
       });
@@ -117,6 +121,7 @@
     updateNavigation();
   }
   function drawShip(group,color) {
+    if(window.HarborVisuals){window.HarborVisuals.drawShip(group,color,element);return;}
     element('path',{d:'M0 -26 Q2 -27 5 -21 L23 17 Q25 23 18 20 L0 13 L-18 20 Q-25 23 -23 17 L-5 -21 Q-2 -27 0 -26Z',class:'ship-body',fill:color,stroke:color,'stroke-width':1},group);
     element('path',{d:'M0 -19 L0 12 L-17 18Z',fill:'#fff','fill-opacity':.26,'pointer-events':'none'},group);
     element('path',{d:'M0 -18 L6 4 L0 1 L-6 4Z',class:'ship-window',fill:'#fff','fill-opacity':.85},group);
@@ -126,9 +131,12 @@
     const width = level.width*CELL+PAD*2, height = level.height*CELL+PAD*2;
     svg.setAttribute('viewBox',`0 0 ${width} ${height}`);
     svg.setAttribute('role','group'); svg.setAttribute('aria-label',`${level.title}，点邮船放行`);
+    const ongoingFlights=flightLayer&&flightLayer.parentNode===svg?flightLayer:null;
     svg.replaceChildren();
     element('title',{},svg,`第${index+1}关 ${level.title}`);
     const background = element('g',{'aria-hidden':'true'},svg);
+    if(window.HarborVisuals)window.HarborVisuals.drawBoard(background,{width,height,cols:level.width,rows:level.height,CELL,PAD},element);
+    else {
     element('rect',{x:PAD-7,y:PAD-7,width:level.width*CELL+14,height:level.height*CELL+14,rx:26,fill:'#f4f9fc',stroke:'#dbe9ee','stroke-width':1.5},background);
     for (let y=0;y<level.height;y++) {
       const cy=center({x:0,y}).y;
@@ -141,44 +149,55 @@
       for (const y of [PAD-12,height-PAD+12]) element('line',{x1:cx-6,y1:y,x2:cx+6,y2:y,class:'port-line',stroke:'#7dc9bd','stroke-width':3,'stroke-linecap':'round'},background);
       for(let y=0;y<level.height;y++) {const p=center({x,y});element('circle',{cx:p.x,cy:p.y,r:2.4,fill:'#c8dce3',class:'grid-dot'},background);}
     }
+    }
     pathLayer=element('g',{'aria-hidden':'true','pointer-events':'none',id:'route-layer'},svg);
     const objects=element('g',{},svg);
     for(const wall of level.walls) {
       const p=center(wall),g=element('g',{transform:`translate(${p.x} ${p.y})`,class:'wall','aria-hidden':'true'},objects);
-      element('rect',{x:-19,y:-19,width:38,height:38,rx:12,fill:'#e2eaf0',stroke:'#bdccd6','stroke-width':1.5},g);
-      element('path',{d:'M-6 -6 L6 6 M6 -6 L-6 6',stroke:'#94a9b6','stroke-width':2.3,'stroke-linecap':'round'},g);
+      if(window.HarborVisuals)window.HarborVisuals.drawWall(g,element);
+      else {element('rect',{x:-19,y:-19,width:38,height:38,rx:12,fill:'#e2eaf0',stroke:'#bdccd6','stroke-width':1.5},g);
+      element('path',{d:'M-6 -6 L6 6 M6 -6 L-6 6',stroke:'#94a9b6','stroke-width':2.3,'stroke-linecap':'round'},g);}
     }
     level.mirrors.forEach((mirror,i) => {
       const p=center(mirror),orientation=mirror.slash^(mirror.fixed?0:state.phase);
       const group=element('g',{transform:`translate(${p.x} ${p.y})`,class:`mirror-group${mirror.fixed?' fixed-mirror':''}`,'data-orientation':orientation,'aria-hidden':'true'},objects);
+      if(window.HarborVisuals)window.HarborVisuals.drawMirror(group,{fixed:!!mirror.fixed,orientation,previousOrientation:mirror.slash^(mirror.fixed?0:previousPhase),animate:!reduced&&previousPhase!==null&&previousPhase!==state.phase},element);
+      else {
       element('rect',{x:-20,y:-20,width:40,height:40,rx:9,transform:'rotate(45)',class:'mirror-gem',fill:mirror.fixed?'#f7e7b7':'#c5ece1',stroke:mirror.fixed?'#c99d45':'#8bc9b8','stroke-width':1.4},group);
       if(mirror.fixed)element('rect',{x:-15,y:-15,width:30,height:30,rx:6,transform:'rotate(45)',fill:'none',stroke:'#d2ae63','stroke-width':1},group);
       const direction=element('g',{transform:`rotate(${orientation*90})`},group);
       element('line',{x1:-15,y1:15,x2:15,y2:-15,class:'mirror-line',stroke:mirror.fixed?'#9e7329':'#258b7d','stroke-width':5,'stroke-linecap':'round'},direction);
       element('circle',{cx:0,cy:0,r:3,fill:'#f0fff9'},group);
       if(!mirror.fixed && previousPhase !== null && previousPhase !== state.phase && !reduced) element('animateTransform',{attributeName:'transform',type:'rotate',from:(mirror.slash^previousPhase)*90,to:orientation*90,dur:'.28s',fill:'freeze'},direction);
+      }
       element('title',{},group,`${mirror.fixed?'定向镜':'折光镜'}${i+1}，镜面${orientation ? '反斜线' : '斜线'}`);
     });
     for(const portal of level.portals||[]){
       const p=center(portal),color=String(portal.pair)==='2'?'#b36d9b':'#8970bc';
       const group=element('g',{transform:`translate(${p.x} ${p.y})`,class:'portal-group','data-pair':portal.pair,'aria-hidden':'true'},objects);
+      if(window.HarborVisuals)window.HarborVisuals.drawPortal(group,{pair:portal.pair},element);
+      else {
       element('circle',{r:25,fill:color,'fill-opacity':.11,stroke:color,'stroke-width':2},group);
       element('circle',{r:17,fill:'#fbf8ff',stroke:color,'stroke-width':2,'stroke-dasharray':'5 4'},group);
       element('text',{x:0,y:6,'text-anchor':'middle','font-size':18,'font-weight':750,fill:color},group,portal.pair);
+      }
       element('title',{},group,`${portal.pair}号星门，传送至同编号星门并保持航向`);
     }
     for(const gate of level.gates||[]){
       const p=center(gate),open=gate.openPhase===state.phase,color=gate.openPhase?'#b67463':'#578fa8';
       const group=element('g',{transform:`translate(${p.x} ${p.y})`,class:`tide-gate ${open?'open':'closed'}`,'data-open':open,'aria-hidden':'true'},objects);
+      if(window.HarborVisuals)window.HarborVisuals.drawGate(group,{open,phase:gate.openPhase},element);
+      else {
       element('rect',{x:-23,y:-23,width:46,height:46,rx:10,fill:open?'#f1faf8':'#f3e8e2','fill-opacity':open?.6:1,stroke:color,'stroke-width':2,'stroke-dasharray':open?'4 5':'none'},group);
       if(!open)element('path',{d:'M-16 -12 H16 M-16 12 H16',stroke:color,'stroke-width':4,'stroke-linecap':'round'},group);
       element('text',{x:0,y:6,'text-anchor':'middle','font-size':17,'font-weight':750,fill:color},group,gate.openPhase?'B':'A');
+      }
       element('title',{},group,`${gate.openPhase?'B':'A'}相潮汐闸，当前${open?'开启':'关闭'}`);
     }
     const remaining=new Set(state.remaining);
     level.ships.forEach((ship,i) => {
       if(!remaining.has(ship.id)) return;
-      const p=center(ship),color=i%3===1?'#4f83bd':'#ed8b78';
+      const p=center(ship),color=['#ed8b78','#4f83bd','#f7e7b7'][i%3];
       const group=element('g',{transform:`translate(${p.x} ${p.y})`,class:`ship${hinted===ship.id?' hinted':''}`,role:'button',tabindex:busy?-1:0,'aria-label':`邮船 ${ship.id}，朝${directions[ship.dir]}，放行`,'data-id':ship.id},objects);
       element('rect',{x:-40,y:-40,width:80,height:80,rx:15,fill:'transparent',class:'ship-hit'},group);
       const body=element('g',{transform:`rotate(${ship.dir*90})`,'pointer-events':'none'},group); drawShip(body,color);
@@ -190,7 +209,8 @@
       group.addEventListener('click',()=>depart(ship.id));
       group.addEventListener('keydown',event=>{if(event.key==='Enter'||event.key===' '){event.preventDefault();depart(ship.id);}});
     });
-    flightLayer=element('g',{'aria-hidden':'true','pointer-events':'none'},svg);
+    flightLayer=ongoingFlights||element('g',{'aria-hidden':'true','pointer-events':'none'},svg);
+    if(ongoingFlights)svg.append(ongoingFlights);
   }
   function showRoute(id,force=false) {
     if(busy&&!force)return;
@@ -206,13 +226,43 @@
     requestAnimationFrame(()=>stage.classList.add('phase-flash'));
     flashTimer=setTimeout(()=>stage.classList.remove('phase-flash'),420);
   }
+  function updateArcade() {
+    if($('score-value'))$('score-value').textContent=score.toLocaleString('en-US');
+    if($('combo-count')){$('combo-count').textContent=`×${combo}`;$('combo-count').closest('.combo-pill').classList.toggle('hot',combo>=3);}
+  }
+  function arcadeFeedback(text,milestone=false) {
+    const node=$('combo-feedback');if(!node)return;
+    clearTimeout(feedbackTimer);node.textContent=text;node.classList.remove('visible','milestone');
+    requestAnimationFrame(()=>node.classList.add('visible',...(milestone?['milestone']:[])));
+    feedbackTimer=setTimeout(()=>node.classList.remove('visible','milestone'),1000);
+  }
+  function cancelFlights() {
+    for(const [key,flight] of flights){cancelAnimationFrame(flight.frame);flight.ghost.remove();flight.resolve();flights.delete(key);}
+    if(flightLayer)flightLayer.replaceChildren();
+  }
+  function exitSplash(point) {
+    if(reduced)return;
+    const group=element('g',{transform:`translate(${point.x} ${point.y})`,class:'exit-splash'},flightLayer);
+    const ring=element('circle',{r:4,fill:'none',stroke:'#f2d89b','stroke-width':2},group);
+    element('animate',{attributeName:'r',from:4,to:29,dur:'.32s',fill:'freeze'},ring);
+    element('animate',{attributeName:'opacity',from:.9,to:0,dur:'.32s',fill:'freeze'},ring);
+    for(let i=0;i<6;i++){
+      const angle=i*Math.PI/3,drop=element('circle',{cx:0,cy:0,r:2.5,fill:i%2?'#80e1cb':'#f2d89b'},group);
+      element('animate',{attributeName:'cx',from:0,to:Math.cos(angle)*29,dur:'.28s',fill:'freeze'},drop);
+      element('animate',{attributeName:'cy',from:0,to:Math.sin(angle)*29,dur:'.28s',fill:'freeze'},drop);
+      element('animate',{attributeName:'opacity',from:1,to:0,dur:'.3s',fill:'freeze'},drop);
+    }
+    setTimeout(()=>group.remove(),350);
+  }
   function fly(ship,route) {
     return new Promise(resolve=>{
       const points=route.points.map(p=>({...center(p),jump:!!p.jump})),lengths=[],sums=[0];let total=0;
-      for(let i=1;i<points.length;i++){const length=points[i].jump?CELL*.75:Math.hypot(points[i].x-points[i-1].x,points[i].y-points[i-1].y);lengths.push(length);total+=length;sums.push(total);}
-      const ghost=element('g',{class:'ghost-ship'},flightLayer);drawShip(ghost,level.ships.findIndex(s=>s.id===ship.id)%3===1?'#4f83bd':'#ed8b78');
-      const source=[...svg.querySelectorAll('.ship')].find(n=>n.dataset.id===ship.id);if(source)source.style.opacity=0;
-      const start=performance.now(),duration=reduced?80:Math.min(1250,280+total*.65);
+      for(let i=1;i<points.length;i++){const length=points[i].jump?CELL*.45:Math.hypot(points[i].x-points[i-1].x,points[i].y-points[i-1].y);lengths.push(length);total+=length;sums.push(total);}
+      const token=Symbol('flight'),ghost=element('g',{class:'ghost-ship'},flightLayer);
+      drawShip(ghost,['#ed8b78','#4f83bd','#f7e7b7'][level.ships.findIndex(s=>s.id===ship.id)%3]);
+      const flight={frame:0,ghost,resolve};flights.set(token,flight);
+      const start=performance.now(),duration=reduced?70:Math.min(650,180+total*.26);
+      function finish(){ghost.remove();exitSplash(points.at(-1));flights.delete(token);flight.resolve();}
       function frame(now){
         const progress=Math.min(1,(now-start)/duration),distance=progress*total;let k=0;
         while(k<lengths.length-1&&sums[k+1]<distance)k++;
@@ -220,10 +270,10 @@
         let angle=Math.atan2(b.y-a.y,b.x-a.x)*180/Math.PI+90,px=a.x+(b.x-a.x)*t,py=a.y+(b.y-a.y)*t,opacity=1;
         if(b.jump){const prior=points[k-1];angle=prior?Math.atan2(a.y-prior.y,a.x-prior.x)*180/Math.PI+90:ship.dir*90;px=t<.5?a.x:b.x;py=t<.5?a.y:b.y;opacity=Math.abs(t-.5)*2;}
         ghost.setAttribute('transform',`translate(${px} ${py}) rotate(${angle})`);
-        ghost.setAttribute('opacity',opacity*(progress>.88?(1-progress)/.12:1));
-        if(progress<1)flightFrame=requestAnimationFrame(frame);else{ghost.remove();resolve();}
+        ghost.setAttribute('opacity',opacity*(progress>.9?(1-progress)/.1:1));
+        if(progress<1)flight.frame=requestAnimationFrame(frame);else finish();
       }
-      flightFrame=requestAnimationFrame(frame);
+      flight.frame=requestAnimationFrame(frame);
     });
   }
   function describeProgress(prefix) {
@@ -235,20 +285,28 @@
     if(busy||E.isWon(state))return;
     const result=E.dispatch(level,state,id);
     if(!result.ok){
-      showRoute(id);chime('blocked');
+      misfires++;combo=0;updateArcade();showRoute(id);chime('blocked');
       const node=[...svg.querySelectorAll('.ship')].find(n=>n.dataset.id===id);
-      if(node){node.classList.remove('bumped');requestAnimationFrame(()=>{node.classList.add('bumped');setTimeout(()=>node.classList.remove('bumped'),420);});}
-      const end=result.trace.points.at(-1),gate=(level.gates||[]).find(g=>end&&g.x===end.x&&g.y===end.y);
+      if(node){node.classList.remove('bumped');requestAnimationFrame(()=>{node.classList.add('bumped');setTimeout(()=>node.classList.remove('bumped'),300);});}
       const hasOtherExit=state.remaining.some(shipId=>E.trace(level,state,shipId).ok);
-      const message=hasOtherExit?(result.trace.reason==='gate'&&gate?`这道潮门还未开启。先放走其他畅通的船。`:'这条航线暂时受阻，先放走其他畅通的船。'):'当前没有畅通航线，切换一次镜相就能继续。';
-      say(message,hasOtherExit?'blocked':'switch');return;
+      say(hasOtherExit?'这艘还没解开，看看谁挡住了航线。':'全部航线受阻，换相一次就能继续。',hasOtherExit?'blocked':'switch');return;
     }
-    const oldPhase=state.phase;busy=true;hinted=null;$('flip-btn').classList.remove('hinted','suggested');
-    showRoute(id,true);updateControls();say(`邮船 ${id} 正在离港……`);chime('clear');
-    await fly(level.ships.find(s=>s.id===id),result.trace);
-    state=result.state;busy=false;renderBoard(oldPhase);updateControls();clearRoute();flash();
-    if(E.isWon(state)){win();return;}
-    describeProgress(result.trace.portalJumps?'穿过星门，顺利离港！继续寻找畅通航线。':E.canFlip(level,state)?'顺利离港！镜相已切换，继续寻找畅通航线。':'顺利离港，空出的航道可以通行了。');
+    const launchEpoch=epoch,oldPhase=state.phase,ship=level.ships.find(s=>s.id===id),now=performance.now();
+    combo=now-lastLaunch<2600?combo+1:1;lastLaunch=now;bestCombo=Math.max(bestCombo,combo);
+    const points=100+Math.min(combo,12)*25+result.trace.reflections*20+(result.trace.portalJumps||0)*40+(result.trace.gatePasses||0)*25;
+    score+=points;hinted=null;state=result.state;
+    $('flip-btn').classList.remove('hinted','suggested');
+    renderBoard(oldPhase);updateControls();clearRoute();updateArcade();chime('clear');
+    fly(ship,result.trace);
+    try{navigator.vibrate?.(combo>=5?[8,12,8]:6);}catch(_){}
+    arcadeFeedback(combo>=3?`连航 ×${combo}  +${points}`:`+${points}`,combo>=5);
+    flash();
+    if(E.isWon(state)){
+      busy=true;updateControls();say('全港畅通，正在收尾……','success');
+      await Promise.all([...flights.values()].map(f=>new Promise(done=>{const original=f.resolve;f.resolve=()=>{original();done();};})));
+      if(epoch!==launchEpoch)return;busy=false;win();return;
+    }
+    describeProgress(combo>=3?`连航 ${combo} 艘！接着解开下一条航线。`:'航道已腾空，继续放行下一艘！');
   }
   function changePhase() {
     if(busy||E.isWon(state))return;
@@ -267,7 +325,10 @@
     else{hinted=solution.actions[0].type==='dispatch'?solution.actions[0].id:clearShips[0];renderBoard();showRoute(hinted);say(`邮船 ${hinted} 的航线畅通，先放行，不用换相。`);}
   }
   function win() {
-    saved.completed[level.id]={flips:state.flipsUsed,hints};persist();updateNavigation();chime('win');
+    const previous=saved.completed[level.id]||{},stars=misfires===0?3:misfires<=Math.ceil(level.ships.length*.2)?2:1;
+    saved.completed[level.id]={flips:state.flipsUsed,hints,score:Math.max(previous.score||0,score),bestCombo:Math.max(previous.bestCombo||0,bestCombo),stars:Math.max(previous.stars||0,stars)};persist();updateNavigation();chime('win');
+    if($('win-stars'))$('win-stars').textContent='★'.repeat(stars)+'☆'.repeat(3-stars);
+    if($('win-stats'))$('win-stats').textContent=`得分 ${score.toLocaleString('en-US')} · 最长连航 ${bestCombo} · 受阻 ${misfires}`;
     const final=index===E.LEVELS.length-1,chapterEnd=!final&&E.LEVELS[index+1].chapter!==level.chapter;
     $('win-title').textContent=final?`${E.LEVELS.length}站来信，全部送达`:chapterEnd?`${level.chapterTitle}，顺利抵达`:'这一站，顺利清港';
     $('win-detail').textContent=final?'所有邮船都找到了出口。再挑一站，享受一段轻松航行。':`${level.ships.length} 艘邮船全部抵达，下一段航线正在等你。`;
@@ -277,8 +338,8 @@
     say('全部邮船已离港。做得好！','success');$('win-dialog').showModal();
   }
   function loadLevel(nextIndex) {
-    if(busy)return;cancelAnimationFrame(flightFrame);closeDialog('win-dialog');
-    index=nextIndex;level=E.LEVELS[index];state=E.createState(level);hints=0;hinted=null;viewedChapter=level.chapter||1;
+    if(busy)return;epoch++;cancelFlights();clearTimeout(feedbackTimer);if($('combo-feedback'))$('combo-feedback').classList.remove('visible','milestone');closeDialog('win-dialog');
+    index=nextIndex;level=E.LEVELS[index];state=E.createState(level);hints=0;hinted=null;viewedChapter=level.chapter||1;score=0;combo=0;bestCombo=0;misfires=0;lastLaunch=0;updateArcade();
     $('flip-btn').classList.remove('hinted','suggested');
     $('level-number').textContent=`${level.chapterTitle||'初航群岛'} · ${String(index+1).padStart(2,'0')} / ${E.LEVELS.length}`;
     $('level-title').textContent=level.title;$('level-subtitle').textContent=level.subtitle;$('level-tip').textContent=level.tip;

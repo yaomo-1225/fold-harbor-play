@@ -105,7 +105,8 @@
     const phaseChangesRoutes = E.canFlip(level,state);
     $('flip-btn').disabled = busy || !phaseChangesRoutes;
     $('flip-btn').setAttribute('aria-label',phaseChangesRoutes ? `切换镜相，当前${state.phase ? 'B' : 'A'}相，不限次数` : '本关无需换相');
-    if ($('flip-note')) $('flip-note').textContent = phaseChangesRoutes ? '免费 · 不限次数' : '本关无需换相';
+    const hasClearShip = state.remaining.some(id=>E.trace(level,state,id).ok);
+    if ($('flip-note')) $('flip-note').textContent = !phaseChangesRoutes ? '本关无需换相' : hasClearShip ? '先放畅通的船' : '换一次就能继续';
     for (const id of ['hint-btn','restart-btn','help-btn','levels-btn']) $(id).disabled = busy || (id === 'hint-btn' && won);
     const completed = level.ships.length - state.remaining.length;
     $('progress-fill').style.width = `${completed/level.ships.length*100}%`;
@@ -197,9 +198,9 @@
     if(route.points.length<2)return;
     element('path',{d:geometry(route.points),class:`route-line ${route.ok?'safe':'blocked'}`,fill:'none',stroke:route.ok?'#3baf99':'#dc7d70','stroke-width':5,'stroke-linecap':'round','stroke-linejoin':'round','stroke-dasharray':'5 9',opacity:.85},pathLayer);
     const end=center(route.points.at(-1)); element('circle',{cx:end.x,cy:end.y,r:7,fill:route.ok?'#3baf99':'#dc7d70'},pathLayer);
-    $('route-label').textContent=route.ok?`邮船${id}，折光${route.reflections}次，传送${route.portalJumps||0}次，从${directions[route.exitDir]}侧离港`:`邮船${id}当前航路受阻，可切换镜相或先放行其他船`;
+    $('route-label').textContent=route.ok?`邮船${id}，折光${route.reflections}次，传送${route.portalJumps||0}次，从${directions[route.exitDir]}侧离港`:`邮船${id}当前航路受阻，先放行其他畅通邮船，全部受阻再换相`;
   }
-  function clearRoute(){if(pathLayer)pathLayer.replaceChildren();$('route-label').textContent='点击邮船放行，换相不限次数';}
+  function clearRoute(){if(pathLayer)pathLayer.replaceChildren();$('route-label').textContent='先放畅通的邮船，全部受阻再换相';}
   function flash() {
     clearTimeout(flashTimer);stage.classList.remove('phase-flash');
     requestAnimationFrame(()=>stage.classList.add('phase-flash'));
@@ -238,7 +239,9 @@
       const node=[...svg.querySelectorAll('.ship')].find(n=>n.dataset.id===id);
       if(node){node.classList.remove('bumped');requestAnimationFrame(()=>{node.classList.add('bumped');setTimeout(()=>node.classList.remove('bumped'),420);});}
       const end=result.trace.points.at(-1),gate=(level.gates||[]).find(g=>end&&g.x===end.x&&g.y===end.y);
-      say(result.trace.reason==='gate'&&gate?`这道潮汐闸在 ${gate.openPhase?'B':'A'} 相开启，切换镜相试试。`:'这条航线暂时受阻。换个镜相，或先放行其他船。','blocked');return;
+      const hasOtherExit=state.remaining.some(shipId=>E.trace(level,state,shipId).ok);
+      const message=hasOtherExit?(result.trace.reason==='gate'&&gate?`这道潮门还未开启。先放走其他畅通的船。`:'这条航线暂时受阻，先放走其他畅通的船。'):'当前没有畅通航线，切换一次镜相就能继续。';
+      say(message,hasOtherExit?'blocked':'switch');return;
     }
     const oldPhase=state.phase;busy=true;hinted=null;$('flip-btn').classList.remove('hinted','suggested');
     showRoute(id,true);updateControls();say(`邮船 ${id} 正在离港……`);chime('clear');
@@ -252,15 +255,16 @@
     const result=E.flip(level,state);if(!result.ok)return;
     const oldPhase=state.phase;state=result.state;hinted=null;$('flip-btn').classList.remove('hinted');
     renderBoard(oldPhase);updateControls();clearRoute();flash();chime('flip');
-    describeProgress(`已切到 ${state.phase?'B':'A'} 相。换相不限次数，放心寻找出口。`);
+    describeProgress(`已切到 ${state.phase?'B':'A'} 相，先放走航线畅通的船。`);
   }
   function hint() {
     if(busy||E.isWon(state))return;
     const solution=E.solve(level,state);hinted=null;$('flip-btn').classList.remove('hinted');
     if(!solution||!solution.actions.length){say('请重开本关恢复航线。','blocked');return;}
     hints++;
-    if(solution.actions[0].type==='flip'){$('flip-btn').classList.add('hinted');say('切换一下镜相，就有新的邮船可以离港。','switch');}
-    else{hinted=solution.actions[0].id;renderBoard();showRoute(hinted);say(`邮船 ${hinted} 的航线畅通，点它就能继续。`);}
+    const clearShips=state.remaining.filter(id=>E.trace(level,state,id).ok);
+    if(!clearShips.length){$('flip-btn').classList.add('hinted');say('切换一下镜相，就有新的邮船可以离港。','switch');}
+    else{hinted=solution.actions[0].type==='dispatch'?solution.actions[0].id:clearShips[0];renderBoard();showRoute(hinted);say(`邮船 ${hinted} 的航线畅通，先放行，不用换相。`);}
   }
   function win() {
     saved.completed[level.id]={flips:state.flipsUsed,hints};persist();updateNavigation();chime('win');
@@ -279,8 +283,8 @@
     $('level-number').textContent=`${level.chapterTitle||'初航群岛'} · ${String(index+1).padStart(2,'0')} / ${E.LEVELS.length}`;
     $('level-title').textContent=level.title;$('level-subtitle').textContent=level.subtitle;$('level-tip').textContent=level.tip;
     renderBoard();updateControls();updateMechanicGuide();clearRoute();persist();
-    const introductions={fixed:'金色定向镜保持方向，普通镜面才会随镜相转动。',portal:'同编号星门互通，传送后邮船保持原来的航向。',gate:'潮汐闸的字母就是开启相位，切换镜相试试。'};
-    describeProgress(introductions[level.mechanicIntro]||(index===0?'点一艘前方畅通的邮船，让它驶出港口。':level.brief||'镜面会让航线转弯，换相随时都可以。'));
+    const introductions={fixed:'金色定向镜保持方向，普通镜面才会随镜相转动。',portal:'同编号星门互通，传送后邮船保持原来的航向。',gate:'潮门随离港后的镜相开合，先放行畅通的船。'};
+    describeProgress(introductions[level.mechanicIntro]||(index===0?'点一艘前方畅通的邮船，让它驶出港口。':level.brief||'先放行畅通的船，全部受阻时再换一次镜相。'));
   }
   $('flip-btn').addEventListener('click',changePhase);
   $('hint-btn').addEventListener('click',hint);
